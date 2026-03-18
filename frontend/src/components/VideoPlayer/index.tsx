@@ -369,6 +369,9 @@ export const VideoPlayer = () => {
       let videoTrack = await input.getPrimaryVideoTrack();
       let audioTrack = await input.getPrimaryAudioTrack();
 
+      console.log('Video track:', videoTrack ? { codec: videoTrack.codec, width: videoTrack.displayWidth, height: videoTrack.displayHeight } : null);
+      console.log('Audio track:', audioTrack ? { codec: audioTrack.codec, sampleRate: audioTrack.sampleRate } : null);
+
       let problemMessage = '';
 
       if (videoTrack) {
@@ -376,7 +379,7 @@ export const VideoPlayer = () => {
           problemMessage += 'Unsupported video codec. ';
           videoTrack = null;
         } else if (!(await videoTrack.canDecode())) {
-          problemMessage += 'Unable to decode the video track. ';
+          problemMessage += `Unable to decode the video track (codec: ${videoTrack.codec}). `;
           videoTrack = null;
         }
       }
@@ -386,7 +389,7 @@ export const VideoPlayer = () => {
           problemMessage += 'Unsupported audio codec. ';
           audioTrack = null;
         } else if (!(await audioTrack.canDecode())) {
-          problemMessage += 'Unable to decode the audio track. ';
+          problemMessage += `Unable to decode the audio track (codec: ${audioTrack.codec}). `;
           audioTrack = null;
         }
       }

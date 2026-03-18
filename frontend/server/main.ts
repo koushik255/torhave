@@ -101,6 +101,8 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
     if (!moviePath) return new Response("Missing path", { status: 400, headers });
 
     const fullPath = join(MOVIES_DIR, moviePath);
+    console.log(`[Stream] Request for: ${fullPath}`);
+    
     try {
       const file = await Deno.open(fullPath, { read: true });
       const { size } = await file.stat();
@@ -113,6 +115,8 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
         const end = endStr ? parseInt(endStr, 10) : size - 1;
         const chunkSize = end - start + 1;
 
+        console.log(`[Stream] Range request: ${start}-${end}/${size} (${chunkSize} bytes)`);
+        
         await file.seek(start, Deno.SeekMode.Start);
         
         headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
@@ -126,10 +130,12 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
         });
       }
 
+      console.log(`[Stream] Full file request: ${size} bytes`);
       headers.set("Content-Length", size.toString());
       headers.set("Content-Type", contentType);
       return new Response(file.readable, { headers });
     } catch (e) {
+      console.error(`[Stream] Error:`, e);
       return new Response("File not found", { status: 404, headers });
     }
   }
