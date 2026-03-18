@@ -61,12 +61,14 @@ function getContentType(path: string): string {
 Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
   const url = new URL(req.url);
 
-  // CORS Headers
+  // CORS and Security Headers
   const headers = new Headers({
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Range",
+    "Access-Control-Allow-Headers": req.headers.get("access-control-request-headers") || "Range, Content-Type",
     "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range, Content-Length, Content-Type",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
   });
 
   if (req.method === "OPTIONS") {
@@ -116,12 +118,17 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
       console.log(`[Stream] Content-Type: ${contentType}`);
 
       if (range) {
-        const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(startStr, 10);
-        const end = endStr ? parseInt(endStr, 10) : size - 1;
-        const chunkSize = end - start + 1;
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : size - 1;
+        
+        if (start >= size || end >= size) {
+          headers.set("Content-Range", `bytes */${size}`);
+          return new Response("Range Not Satisfiable", { status: 416, headers });
+        }
 
-        console.log(`[Stream] Parsed range - start: ${startStr}(${start}), end: ${endStr}(${end}), chunkSize: ${chunkSize}`);
+        const chunkSize = end - start + 1;
+        console.log(`[Stream] Parsed range - start: ${start}, end: ${end}, chunkSize: ${chunkSize}`);
         
         await file.seek(start, Deno.SeekMode.Start);
         
@@ -132,7 +139,27 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
 
         console.log(`[Stream] Responding with 206, Content-Range: bytes ${start}-${end}/${size}`);
         
-        return new Response(file.readable, {
+        // Only stream the requested chunk
+        let bytesSent = 0;
+        const limitedStream = file.readable.pipeThrough(new TransformStream({
+          transform(chunk, controller) {
+            const remaining = chunkSize - bytesSent;
+            if (remaining <= 0) {
+              controller.terminate();
+              return;
+            }
+            if (chunk.length <= remaining) {
+              controller.enqueue(chunk);
+              bytesSent += chunk.length;
+            } else {
+              controller.enqueue(chunk.subarray(0, remaining));
+              bytesSent += remaining;
+              controller.terminate();
+            }
+          }
+        }));
+
+        return new Response(limitedStream, {
           status: 206,
           headers,
         });
