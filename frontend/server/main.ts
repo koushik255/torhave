@@ -51,6 +51,9 @@ function getContentType(path: string): string {
     ".jpg": "image/jpeg",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
+    ".mp4": "video/mp4",
+    ".mkv": "video/x-matroska",
+    ".webm": "video/webm",
   };
   return types[ext] || "application/octet-stream";
 }
@@ -102,6 +105,7 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
       const file = await Deno.open(fullPath, { read: true });
       const { size } = await file.stat();
       const range = req.headers.get("range");
+      const contentType = getContentType(fullPath);
 
       if (range) {
         const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
@@ -114,7 +118,7 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
         headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
         headers.set("Accept-Ranges", "bytes");
         headers.set("Content-Length", chunkSize.toString());
-        headers.set("Content-Type", "video/x-matroska");
+        headers.set("Content-Type", contentType);
 
         return new Response(file.readable, {
           status: 206,
@@ -123,7 +127,7 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
       }
 
       headers.set("Content-Length", size.toString());
-      headers.set("Content-Type", "video/x-matroska");
+      headers.set("Content-Type", contentType);
       return new Response(file.readable, { headers });
     } catch (e) {
       return new Response("File not found", { status: 404, headers });
