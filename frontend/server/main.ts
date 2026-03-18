@@ -1,6 +1,10 @@
-import { join, extname, basename } from "https://deno.land/std@0.224.0/path/mod.ts";
+import { join, extname, basename } from "@std/path";
+import { load } from "@std/dotenv";
 
-const MOVIES_DIR = "/home/koushikk/Documents/anew/tor/movie";
+const env = await load();
+const MOVIES_DIR = env["MOVIES_DIR"] || Deno.env.get("MOVIES_DIR") || "/home/koushikk/Documents/anew/tor/movie";
+const DIST_DIR = env["DIST_DIR"] || Deno.env.get("DIST_DIR") || "../dist";
+const PORT = parseInt(env["PORT"] || Deno.env.get("PORT") || "8000");
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -36,7 +40,22 @@ async function listMovies(dir: string): Promise<any[]> {
   return movies;
 }
 
-Deno.serve(async (req) => {
+function getContentType(path: string): string {
+  const ext = extname(path).toLowerCase();
+  const types: Record<string, string> = {
+    ".html": "text/html",
+    ".js": "application/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+  };
+  return types[ext] || "application/octet-stream";
+}
+
+Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
   const url = new URL(req.url);
 
   // CORS Headers
@@ -108,6 +127,25 @@ Deno.serve(async (req) => {
       return new Response(file.readable, { headers });
     } catch (e) {
       return new Response("File not found", { status: 404, headers });
+    }
+  }
+
+  // Serve static files from dist/
+  if (!url.pathname.startsWith("/api")) {
+    const distPath = join(DIST_DIR, url.pathname === "/" ? "index.html" : url.pathname);
+    if (await exists(distPath)) {
+      const file = await Deno.open(distPath, { read: true });
+      const contentType = getContentType(url.pathname);
+      headers.set("Content-Type", contentType);
+      return new Response(file.readable, { headers });
+    }
+
+    // SPA fallback - serve index.html for client-side routes
+    const indexPath = join(DIST_DIR, "index.html");
+    if (await exists(indexPath)) {
+      const content = await Deno.readTextFile(indexPath);
+      headers.set("Content-Type", "text/html");
+      return new Response(content, { headers });
     }
   }
 
