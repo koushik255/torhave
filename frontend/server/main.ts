@@ -135,7 +135,7 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
     const distPath = join(DIST_DIR, url.pathname === "/" ? "index.html" : url.pathname);
     if (await exists(distPath)) {
       const file = await Deno.open(distPath, { read: true });
-      const contentType = getContentType(url.pathname);
+      const contentType = getContentType(distPath);
       headers.set("Content-Type", contentType);
       return new Response(file.readable, { headers });
     }
