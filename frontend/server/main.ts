@@ -98,16 +98,22 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
   // API: Stream Video
   if (url.pathname === "/api/stream") {
     const moviePath = url.searchParams.get("path");
+    console.log(`[Stream] Movie path param: ${moviePath}`);
+    
     if (!moviePath) return new Response("Missing path", { status: 400, headers });
 
     const fullPath = join(MOVIES_DIR, moviePath);
-    console.log(`[Stream] Request for: ${fullPath}`);
+    console.log(`[Stream] Full path: ${fullPath}`);
     
     try {
       const file = await Deno.open(fullPath, { read: true });
       const { size } = await file.stat();
       const range = req.headers.get("range");
       const contentType = getContentType(fullPath);
+      
+      console.log(`[Stream] Raw Range header: ${range}`);
+      console.log(`[Stream] File size: ${size}`);
+      console.log(`[Stream] Content-Type: ${contentType}`);
 
       if (range) {
         const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
@@ -115,7 +121,7 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
         const end = endStr ? parseInt(endStr, 10) : size - 1;
         const chunkSize = end - start + 1;
 
-        console.log(`[Stream] Range request: ${start}-${end}/${size} (${chunkSize} bytes)`);
+        console.log(`[Stream] Parsed range - start: ${startStr}(${start}), end: ${endStr}(${end}), chunkSize: ${chunkSize}`);
         
         await file.seek(start, Deno.SeekMode.Start);
         
@@ -124,13 +130,16 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
         headers.set("Content-Length", chunkSize.toString());
         headers.set("Content-Type", contentType);
 
+        console.log(`[Stream] Responding with 206, Content-Range: bytes ${start}-${end}/${size}`);
+        
         return new Response(file.readable, {
           status: 206,
           headers,
         });
       }
 
-      console.log(`[Stream] Full file request: ${size} bytes`);
+      console.log(`[Stream] No range header, serving full file: ${size} bytes`);
+      headers.set("Accept-Ranges", "bytes");
       headers.set("Content-Length", size.toString());
       headers.set("Content-Type", contentType);
       return new Response(file.readable, { headers });
