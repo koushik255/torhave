@@ -1,4 +1,6 @@
 use clap::Parser;
+use dotenv;
+use std::env;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -14,6 +16,7 @@ struct Args {
 }
 
 fn main() {
+    dotenv::dotenv().ok();
     let args = Args::parse();
 
     if let Some(torrent) = args.torrent_test {
@@ -57,7 +60,10 @@ fn test_torrent(torrent: &str) {
 }
 
 fn download_torrent(torrent: &str) {
-    let output_dir = Path::new("/home/koushikk/Documents/anew/tor/movie");
+    let output_dir = Path::new(
+        &env::var("MOVIES_DIR")
+            .unwrap_or_else(|_| "/home/koushikk/Documents/anew/tor/movie".to_string()),
+    );
 
     if !output_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(output_dir) {
