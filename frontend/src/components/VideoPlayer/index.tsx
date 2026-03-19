@@ -1,23 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ALL_FORMATS,
-  AudioBufferSink,
-  CanvasSink,
-  Input,
-  UrlSource,
-  type WrappedAudioBuffer,
-  type WrappedCanvas,
-} from 'mediabunny';
-import { buildInspectData } from '../../features/inspect/inspect';
-import { InspectModal } from '../../features/inspect/InspectModal';
 import { MovieList } from './MovieList';
 import { PlayerControls } from './PlayerControls';
-import type { InspectData, VolumeIconLevel } from './types';
+import type { VolumeIconLevel } from './types';
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
 const formatSeconds = (seconds: number) => {
+  if (isNaN(seconds)) return "00:00";
   const showMilliseconds = window.innerWidth >= 640;
   const roundedSeconds = Math.round(seconds * 1000) / 1000;
   const hours = Math.floor(roundedSeconds / 3600);
@@ -40,53 +30,28 @@ const formatSeconds = (seconds: number) => {
 
 export const VideoPlayer = () => {
   const playerContainerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const contextRef = useRef<CanvasRenderingContext2D | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const progressBarContainerRef = useRef<HTMLDivElement>(null);
   const volumeBarContainerRef = useRef<HTMLDivElement>(null);
-
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
-  const fileLoadedRef = useRef(false);
-  const videoSinkRef = useRef<CanvasSink | null>(null);
-  const audioSinkRef = useRef<AudioBufferSink | null>(null);
-  const totalDurationRef = useRef(0);
-  const audioContextStartTimeRef = useRef<number | null>(null);
-  const playingRef = useRef(false);
-  const playbackTimeAtStartRef = useRef(0);
-  const videoFrameIteratorRef = useRef<AsyncGenerator<WrappedCanvas, void, unknown> | null>(null);
-  const audioBufferIteratorRef = useRef<AsyncGenerator<WrappedAudioBuffer, void, unknown> | null>(null);
-  const nextFrameRef = useRef<WrappedCanvas | null>(null);
-  const queuedAudioNodesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  const asyncIdRef = useRef(0);
-  const draggingProgressBarRef = useRef(false);
-  const draggingVolumeBarRef = useRef(false);
-  const volumeRef = useRef(0.7);
-  const volumeMutedRef = useRef(false);
-  const hideControlsTimeoutRef = useRef<number | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const hasVideoRef = useRef(false);
-  const inspectRequestIdRef = useRef(0);
 
   const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [warningMessage, setWarningMessage] = useState('');
   const [playerVisible, setPlayerVisible] = useState(false);
-  const [showCanvas, setShowCanvas] = useState(true);
-  const [showVolumeControls, setShowVolumeControls] = useState(true);
-  const [playerTransparent, setPlayerTransparent] = useState(false);
+  const [showVolumeControls] = useState(true);
   const [controlsVisible, setControlsVisible] = useState(false);
   const [cursorHidden, setCursorHidden] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [currentTimeText, setCurrentTimeText] = useState(formatSeconds(0));
   const [durationText, setDurationText] = useState(formatSeconds(0));
   const [progressPercent, setProgressPercent] = useState(0);
-  const [volumePercent, setVolumePercent] = useState(volumeRef.current * 100);
-  const [volumeIconLevel, setVolumeIconLevel] = useState<VolumeIconLevel>(4);
-  const [inspectOpen, setInspectOpen] = useState(false);
-  const [inspectData, setInspectData] = useState<InspectData | null>(null);
+  const [volumePercent, setVolumePercent] = useState(70);
+  const [volumeIconLevel, setVolumeIconLevel] = useState<VolumeIconLevel>(3);
   const [unstyledMode, setUnstyledMode] = useState(false);
+
+  const draggingProgressBarRef = useRef(false);
+  const draggingVolumeBarRef = useRef(false);
+  const hideControlsTimeoutRef = useRef<number | null>(null);
 
   const clearHideControlsTimeout = useCallback(() => {
     if (hideControlsTimeoutRef.current !== null) {
@@ -95,455 +60,124 @@ export const VideoPlayer = () => {
     }
   }, []);
 
-  const updateProgressBarTime = useCallback((seconds: number) => {
-    const duration = totalDurationRef.current;
+  const updateProgressBarUI = useCallback((seconds: number, duration: number) => {
     const safeSeconds = clamp(seconds, 0, duration || 0);
     setCurrentTimeText(formatSeconds(safeSeconds));
     setProgressPercent(duration > 0 ? (safeSeconds / duration) * 100 : 0);
   }, []);
 
-  const updateVolume = useCallback(() => {
-    const actualVolume = volumeMutedRef.current ? 0 : volumeRef.current;
-    setVolumePercent(actualVolume * 100);
-
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = actualVolume ** 2;
-    }
-
-    const iconNumber = volumeMutedRef.current ? 0 : Math.ceil(1 + 3 * volumeRef.current);
-    setVolumeIconLevel(iconNumber as VolumeIconLevel);
-  }, []);
-
-  const getPlaybackTime = useCallback(() => {
-    if (playingRef.current && audioContextRef.current && audioContextStartTimeRef.current !== null) {
-      return audioContextRef.current.currentTime
-        - audioContextStartTimeRef.current
-        + playbackTimeAtStartRef.current;
-    }
-
-    return playbackTimeAtStartRef.current;
-  }, []);
-
   const hideControls = useCallback(() => {
-    if (!hasVideoRef.current) {
-      return;
-    }
-
     setControlsVisible(false);
     setCursorHidden(true);
   }, []);
 
   const showControlsTemporarily = useCallback(() => {
-    if (!hasVideoRef.current) {
-      return;
-    }
-
     setControlsVisible(true);
     setCursorHidden(false);
     clearHideControlsTimeout();
 
     hideControlsTimeoutRef.current = window.setTimeout(() => {
-      if (draggingProgressBarRef.current) {
-        return;
-      }
-
+      if (draggingProgressBarRef.current) return;
       hideControls();
     }, 2000);
   }, [clearHideControlsTimeout, hideControls]);
 
-  const pause = useCallback(() => {
-    playbackTimeAtStartRef.current = getPlaybackTime();
-    playingRef.current = false;
-    setPlaying(false);
-
-    void audioBufferIteratorRef.current?.return?.();
-    audioBufferIteratorRef.current = null;
-
-    for (const node of queuedAudioNodesRef.current) {
-      node.stop();
-    }
-
-    queuedAudioNodesRef.current.clear();
-  }, [getPlaybackTime]);
-
-  const startVideoIterator = useCallback(async () => {
-    if (!videoSinkRef.current || !contextRef.current || !canvasRef.current) {
-      return;
-    }
-
-    asyncIdRef.current += 1;
-    await videoFrameIteratorRef.current?.return?.();
-
-    videoFrameIteratorRef.current = videoSinkRef.current.canvases(getPlaybackTime());
-
-    const firstFrame = (await videoFrameIteratorRef.current.next()).value ?? null;
-    const secondFrame = (await videoFrameIteratorRef.current.next()).value ?? null;
-
-    nextFrameRef.current = secondFrame;
-
-    if (firstFrame) {
-      contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      contextRef.current.drawImage(firstFrame.canvas, 0, 0);
-    }
-  }, [getPlaybackTime]);
-
-  const updateNextFrame = useCallback(async () => {
-    const currentAsyncId = asyncIdRef.current;
-
-    while (videoFrameIteratorRef.current && contextRef.current && canvasRef.current) {
-      const newNextFrame = (await videoFrameIteratorRef.current.next()).value ?? null;
-
-      if (!newNextFrame || currentAsyncId !== asyncIdRef.current) {
-        break;
-      }
-
-      const playbackTime = getPlaybackTime();
-      if (newNextFrame.timestamp <= playbackTime) {
-        contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        contextRef.current.drawImage(newNextFrame.canvas, 0, 0);
-      } else {
-        nextFrameRef.current = newNextFrame;
-        break;
-      }
-    }
-  }, [getPlaybackTime]);
-
-  const runAudioIterator = useCallback(async () => {
-    if (!audioSinkRef.current || !audioContextRef.current || !gainNodeRef.current || !audioBufferIteratorRef.current) {
-      return;
-    }
-
-    for await (const { buffer, timestamp } of audioBufferIteratorRef.current) {
-      if (!audioContextRef.current || !gainNodeRef.current || audioContextStartTimeRef.current === null) {
-        break;
-      }
-
-      const node = audioContextRef.current.createBufferSource();
-      node.buffer = buffer;
-      node.connect(gainNodeRef.current);
-
-      const startTimestamp = audioContextStartTimeRef.current + timestamp - playbackTimeAtStartRef.current;
-
-      if (startTimestamp >= audioContextRef.current.currentTime) {
-        node.start(startTimestamp);
-      } else {
-        node.start(audioContextRef.current.currentTime, audioContextRef.current.currentTime - startTimestamp);
-      }
-
-      queuedAudioNodesRef.current.add(node);
-      node.onended = () => {
-        queuedAudioNodesRef.current.delete(node);
-      };
-
-      if (timestamp - getPlaybackTime() >= 1) {
-        await new Promise<void>((resolve) => {
-          const waitId = window.setInterval(() => {
-            if (timestamp - getPlaybackTime() < 1) {
-              window.clearInterval(waitId);
-              resolve();
-            }
-          }, 100);
-        });
-      }
-    }
-  }, [getPlaybackTime]);
-
-  const play = useCallback(async () => {
-    if (!audioContextRef.current) {
-      return;
-    }
-
-    if (audioContextRef.current.state === 'suspended') {
-      await audioContextRef.current.resume();
-    }
-
-    if (getPlaybackTime() === totalDurationRef.current) {
-      playbackTimeAtStartRef.current = 0;
-      await startVideoIterator();
-    }
-
-    audioContextStartTimeRef.current = audioContextRef.current.currentTime;
-    playingRef.current = true;
-    setPlaying(true);
-
-    if (audioSinkRef.current) {
-      void audioBufferIteratorRef.current?.return?.();
-      audioBufferIteratorRef.current = audioSinkRef.current.buffers(getPlaybackTime());
-      void runAudioIterator();
-    }
-  }, [getPlaybackTime, runAudioIterator, startVideoIterator]);
-
   const togglePlay = useCallback(() => {
-    if (!fileLoadedRef.current) {
-      return;
-    }
-
-    if (playingRef.current) {
-      pause();
+    if (!videoRef.current) return;
+    if (videoRef.current.paused) {
+      videoRef.current.play().catch(console.error);
     } else {
-      void play();
+      videoRef.current.pause();
     }
-  }, [pause, play]);
+  }, []);
 
-  const seekToTime = useCallback(async (seconds: number) => {
-    updateProgressBarTime(seconds);
+  const seekToTime = useCallback((seconds: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = seconds;
+  }, []);
 
-    const wasPlaying = playingRef.current;
-    if (wasPlaying) {
-      pause();
+  const initMediaPlayer = useCallback((url: string) => {
+    setLoading(true);
+    setPlayerVisible(true);
+    setErrorMessage('');
+    setControlsVisible(false);
+    setCursorHidden(false);
+    setPlaying(false);
+    setCurrentTimeText(formatSeconds(0));
+    setDurationText(formatSeconds(0));
+    setProgressPercent(0);
+
+    if (videoRef.current) {
+      videoRef.current.src = url;
+      videoRef.current.load();
     }
-
-    playbackTimeAtStartRef.current = seconds;
-    await startVideoIterator();
-
-    if (wasPlaying && playbackTimeAtStartRef.current < totalDurationRef.current) {
-      void play();
-    }
-  }, [pause, play, startVideoIterator, updateProgressBarTime]);
-
-  const disposePlayback = useCallback(async () => {
-    clearHideControlsTimeout();
-
-    if (playingRef.current) {
-      pause();
-    }
-
-    void videoFrameIteratorRef.current?.return?.();
-    void audioBufferIteratorRef.current?.return?.();
-
-    videoFrameIteratorRef.current = null;
-    audioBufferIteratorRef.current = null;
-    nextFrameRef.current = null;
-    videoSinkRef.current = null;
-    audioSinkRef.current = null;
-    fileLoadedRef.current = false;
-    hasVideoRef.current = false;
-    asyncIdRef.current += 1;
-    inspectRequestIdRef.current += 1;
-
-    if (audioContextRef.current) {
-      await audioContextRef.current.close().catch(() => undefined);
-      audioContextRef.current = null;
-    }
-
-    gainNodeRef.current = null;
-  }, [clearHideControlsTimeout, pause]);
-
-  const initMediaPlayer = useCallback(async (url: string) => {
-    try {
-      await disposePlayback();
-
-      if (!window.isSecureContext) {
-        throw new Error(
-          'Media features are disabled because this site is being served over an insecure connection (HTTP). '
-          + 'Please use HTTPS or access it via http://localhost using an SSH tunnel to enable video decoding.'
-        );
-      }
-
-      setLoading(true);
-      setPlayerVisible(true);
-      setErrorMessage('');
-      setWarningMessage('');
-      setControlsVisible(false);
-      setCursorHidden(false);
-      setInspectOpen(false);
-      setInspectData(null);
-      updateProgressBarTime(0);
-      playbackTimeAtStartRef.current = 0;
-      totalDurationRef.current = 0;
-
-      const source = new UrlSource(url);
-      const input = new Input({
-        source,
-        formats: ALL_FORMATS,
-      });
-
-      totalDurationRef.current = await input.computeDuration();
-      setDurationText(formatSeconds(totalDurationRef.current));
-
-      const inspectRequestId = inspectRequestIdRef.current + 1;
-      inspectRequestIdRef.current = inspectRequestId;
-      void buildInspectData(input, url, totalDurationRef.current)
-        .then((data) => {
-          if (inspectRequestIdRef.current === inspectRequestId) {
-            setInspectData(data);
-          }
-        })
-        .catch((inspectError) => {
-          console.error('Failed to inspect media:', inspectError);
-        });
-
-      let videoTrack = await input.getPrimaryVideoTrack();
-      let audioTrack = await input.getPrimaryAudioTrack();
-
-      console.log('Video track:', videoTrack ? { codec: videoTrack.codec, width: videoTrack.displayWidth, height: videoTrack.displayHeight } : null);
-      console.log('Audio track:', audioTrack ? { codec: audioTrack.codec, sampleRate: audioTrack.sampleRate } : null);
-
-      let problemMessage = '';
-
-      if (videoTrack) {
-        if (videoTrack.codec === null) {
-          problemMessage += 'Unsupported video codec. ';
-          videoTrack = null;
-        } else if (!(await videoTrack.canDecode())) {
-          problemMessage += `Unable to decode the video track (codec: ${videoTrack.codec}). `;
-          videoTrack = null;
-        }
-      }
-
-      if (audioTrack) {
-        if (audioTrack.codec === null) {
-          problemMessage += 'Unsupported audio codec. ';
-          audioTrack = null;
-        } else if (!(await audioTrack.canDecode())) {
-          problemMessage += `Unable to decode the audio track (codec: ${audioTrack.codec}). `;
-          audioTrack = null;
-        }
-      }
-
-      if (!videoTrack && !audioTrack) {
-        throw new Error(problemMessage || 'No audio or video track found.');
-      }
-
-      setWarningMessage(problemMessage.trim());
-
-      const AudioContextCtor =
-        window.AudioContext
-        || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-
-      if (!AudioContextCtor) {
-        throw new Error('Web Audio is not supported in this browser.');
-      }
-
-      audioContextRef.current = new AudioContextCtor({
-        sampleRate: audioTrack?.sampleRate,
-      });
-
-      gainNodeRef.current = audioContextRef.current.createGain();
-      gainNodeRef.current.connect(audioContextRef.current.destination);
-      updateVolume();
-
-      const videoCanBeTransparent = videoTrack
-        ? await videoTrack.canBeTransparent()
-        : false;
-
-      setPlayerTransparent(videoCanBeTransparent);
-
-      videoSinkRef.current = videoTrack
-        ? new CanvasSink(videoTrack, {
-            poolSize: 2,
-            fit: 'contain',
-            alpha: videoCanBeTransparent,
-          })
-        : null;
-
-      audioSinkRef.current = audioTrack
-        ? new AudioBufferSink(audioTrack)
-        : null;
-
-      hasVideoRef.current = Boolean(videoTrack);
-      setShowCanvas(Boolean(videoTrack));
-      setShowVolumeControls(Boolean(audioTrack));
-
-      await new Promise<void>((resolve) => {
-        window.requestAnimationFrame(() => {
-          contextRef.current = canvasRef.current?.getContext('2d') ?? null;
-          resolve();
-        });
-      });
-
-      if (videoTrack && canvasRef.current) {
-        canvasRef.current.width = videoTrack.displayWidth;
-        canvasRef.current.height = videoTrack.displayHeight;
-      }
-
-      fileLoadedRef.current = true;
-      await startVideoIterator();
-
-      if (audioContextRef.current.state === 'running') {
-        await play();
-      }
-
-      setLoading(false);
-      setPlayerVisible(true);
-
-      if (!videoSinkRef.current) {
-        setControlsVisible(true);
-      }
-    } catch (error) {
-      console.error(error);
-      setErrorMessage(String(error));
-      setLoading(false);
-      setPlayerVisible(false);
-      setInspectData(null);
-    }
-  }, [disposePlayback, play, startVideoIterator, updateProgressBarTime, updateVolume]);
+  }, []);
 
   useEffect(() => {
-    contextRef.current = canvasRef.current?.getContext('2d') ?? null;
-    updateVolume();
-  }, [playerVisible, updateVolume]);
+    const video = videoRef.current;
+    if (!video) return;
 
-  useEffect(() => {
-    const render = () => {
-      if (fileLoadedRef.current && canvasRef.current && contextRef.current) {
-        const playbackTime = getPlaybackTime();
-
-        if (playbackTime >= totalDurationRef.current) {
-          pause();
-          playbackTimeAtStartRef.current = totalDurationRef.current;
-          updateProgressBarTime(totalDurationRef.current);
-        }
-
-        if (nextFrameRef.current && nextFrameRef.current.timestamp <= playbackTime) {
-          contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-          contextRef.current.drawImage(nextFrameRef.current.canvas, 0, 0);
-          nextFrameRef.current = null;
-          void updateNextFrame();
-        }
-
-        if (!draggingProgressBarRef.current) {
-          updateProgressBarTime(playbackTime);
-        }
+    const handlePlay = () => setPlaying(true);
+    const handlePause = () => setPlaying(false);
+    const handleTimeUpdate = () => {
+      if (!draggingProgressBarRef.current) {
+        updateProgressBarUI(video.currentTime, video.duration);
       }
-
-      animationFrameRef.current = window.requestAnimationFrame(() => render());
+    };
+    const handleDurationChange = () => {
+      setDurationText(formatSeconds(video.duration));
+    };
+    const handleWaiting = () => setLoading(true);
+    const handleCanPlay = () => setLoading(false);
+    const handleError = () => {
+      setErrorMessage('Failed to load video');
+      setLoading(false);
+    };
+    const handleVolumeChange = () => {
+      const volume = video.muted ? 0 : video.volume;
+      setVolumePercent(volume * 100);
+      const level = video.muted ? 0 : Math.ceil(1 + 3 * video.volume);
+      setVolumeIconLevel(level as VolumeIconLevel);
     };
 
-    render();
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    video.addEventListener('durationchange', handleDurationChange);
+    video.addEventListener('waiting', handleWaiting);
+    video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('error', handleError);
+    video.addEventListener('volumechange', handleVolumeChange);
+
+    // Set initial volume
+    video.volume = 0.7;
 
     return () => {
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current);
-      }
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+      video.removeEventListener('durationchange', handleDurationChange);
+      video.removeEventListener('waiting', handleWaiting);
+      video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('error', handleError);
+      video.removeEventListener('volumechange', handleVolumeChange);
     };
-  }, [getPlaybackTime, pause, updateNextFrame, updateProgressBarTime]);
+  }, [updateProgressBarUI]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code === 'Escape' && inspectOpen) {
-        setInspectOpen(false);
-        event.preventDefault();
-        return;
-      }
-
-      if (!fileLoadedRef.current) {
-        return;
-      }
+      if (!videoRef.current) return;
 
       if (event.code === 'Space' || event.code === 'KeyK') {
         togglePlay();
       } else if (event.code === 'KeyF') {
-        playerContainerRef.current?.requestFullscreen().catch((fullscreenError) => {
-          console.error('Failed to enter fullscreen mode:', fullscreenError);
-        });
+        playerContainerRef.current?.requestFullscreen().catch(console.error);
       } else if (event.code === 'ArrowLeft') {
-        void seekToTime(Math.max(getPlaybackTime() - 5, 0));
+        seekToTime(Math.max(videoRef.current.currentTime - 5, 0));
       } else if (event.code === 'ArrowRight') {
-        void seekToTime(Math.min(getPlaybackTime() + 5, totalDurationRef.current));
+        seekToTime(Math.min(videoRef.current.currentTime + 5, videoRef.current.duration));
       } else if (event.code === 'KeyM') {
-        volumeMutedRef.current = !volumeMutedRef.current;
-        updateVolume();
+        videoRef.current.muted = !videoRef.current.muted;
       } else {
         return;
       }
@@ -552,72 +186,42 @@ export const VideoPlayer = () => {
       event.preventDefault();
     };
 
-    const handleResize = () => {
-      if (totalDurationRef.current) {
-        updateProgressBarTime(getPlaybackTime());
-        setDurationText(formatSeconds(totalDurationRef.current));
-      }
-    };
-
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [getPlaybackTime, inspectOpen, seekToTime, showControlsTemporarily, togglePlay, updateProgressBarTime, updateVolume]);
-
-  useEffect(() => {
-    return () => {
-      void disposePlayback();
-    };
-  }, [disposePlayback]);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [seekToTime, showControlsTemporarily, togglePlay]);
 
   const handleSelectMovie = (url: string, name: string) => {
     setFileName(name);
-    void initMediaPlayer(url);
-  };
-
-  const handleOpenInspect = () => {
-    if (inspectData) {
-      setInspectOpen(true);
-    }
+    initMediaPlayer(url);
   };
 
   const handleToggleUnstyledMode = () => {
-    setUnstyledMode((currentValue) => !currentValue);
+    setUnstyledMode((v) => !v);
   };
 
   const handleProgressPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!progressBarContainerRef.current || totalDurationRef.current <= 0) {
-      return;
-    }
+    if (!progressBarContainerRef.current || !videoRef.current || videoRef.current.duration <= 0) return;
 
     const target = event.currentTarget;
     const pointerId = event.pointerId;
-
     draggingProgressBarRef.current = true;
     target.setPointerCapture(pointerId);
 
-    const rect = progressBarContainerRef.current.getBoundingClientRect();
-    const completion = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    updateProgressBarTime(completion * totalDurationRef.current);
+    const updateFromPointer = (e: PointerEvent | React.PointerEvent) => {
+      const rect = progressBarContainerRef.current!.getBoundingClientRect();
+      const completion = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      updateProgressBarUI(completion * videoRef.current!.duration, videoRef.current!.duration);
+      return completion;
+    };
+
+    updateFromPointer(event);
     clearHideControlsTimeout();
 
     const handlePointerUp = (upEvent: PointerEvent) => {
       draggingProgressBarRef.current = false;
-      if (target.hasPointerCapture(pointerId)) {
-        target.releasePointerCapture(pointerId);
-      }
-
-      const nextRect = progressBarContainerRef.current?.getBoundingClientRect();
-      if (!nextRect) {
-        return;
-      }
-
-      const nextCompletion = clamp((upEvent.clientX - nextRect.left) / nextRect.width, 0, 1);
-      void seekToTime(nextCompletion * totalDurationRef.current);
+      target.releasePointerCapture(pointerId);
+      const completion = updateFromPointer(upEvent);
+      seekToTime(completion * videoRef.current!.duration);
       showControlsTemporarily();
     };
 
@@ -625,45 +229,34 @@ export const VideoPlayer = () => {
   };
 
   const handleProgressPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!draggingProgressBarRef.current || !progressBarContainerRef.current) {
-      return;
-    }
-
+    if (!draggingProgressBarRef.current || !progressBarContainerRef.current || !videoRef.current) return;
     const rect = progressBarContainerRef.current.getBoundingClientRect();
     const completion = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    updateProgressBarTime(completion * totalDurationRef.current);
+    updateProgressBarUI(completion * videoRef.current.duration, videoRef.current.duration);
   };
 
   const handleVolumePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!volumeBarContainerRef.current) {
-      return;
-    }
+    if (!volumeBarContainerRef.current || !videoRef.current) return;
 
     const target = event.currentTarget;
     const pointerId = event.pointerId;
-
     draggingVolumeBarRef.current = true;
     target.setPointerCapture(pointerId);
 
-    const rect = volumeBarContainerRef.current.getBoundingClientRect();
-    volumeRef.current = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    volumeMutedRef.current = false;
-    updateVolume();
+    const updateFromPointer = (e: PointerEvent | React.PointerEvent) => {
+      const rect = volumeBarContainerRef.current!.getBoundingClientRect();
+      const vol = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      videoRef.current!.volume = vol;
+      videoRef.current!.muted = false;
+    };
+
+    updateFromPointer(event);
     clearHideControlsTimeout();
 
     const handlePointerUp = (upEvent: PointerEvent) => {
       draggingVolumeBarRef.current = false;
-      if (target.hasPointerCapture(pointerId)) {
-        target.releasePointerCapture(pointerId);
-      }
-
-      const nextRect = volumeBarContainerRef.current?.getBoundingClientRect();
-      if (!nextRect) {
-        return;
-      }
-
-      volumeRef.current = clamp((upEvent.clientX - nextRect.left) / nextRect.width, 0, 1);
-      updateVolume();
+      target.releasePointerCapture(pointerId);
+      updateFromPointer(upEvent);
       showControlsTemporarily();
     };
 
@@ -671,45 +264,21 @@ export const VideoPlayer = () => {
   };
 
   const handleVolumePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!draggingVolumeBarRef.current || !volumeBarContainerRef.current) {
-      return;
-    }
-
+    if (!draggingVolumeBarRef.current || !volumeBarContainerRef.current || !videoRef.current) return;
     const rect = volumeBarContainerRef.current.getBoundingClientRect();
-    volumeRef.current = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    updateVolume();
+    const vol = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    videoRef.current.volume = vol;
   };
 
   const handleVolumeButtonClick = () => {
-    volumeMutedRef.current = !volumeMutedRef.current;
-    updateVolume();
+    if (videoRef.current) videoRef.current.muted = !videoRef.current.muted;
   };
 
   const handleFullscreenClick = () => {
-    if (!playerContainerRef.current) {
-      return;
-    }
-
     if (document.fullscreenElement) {
-      void document.exitFullscreen();
+      document.exitFullscreen().catch(console.error);
     } else {
-      playerContainerRef.current.requestFullscreen().catch((fullscreenError) => {
-        console.error('Failed to enter fullscreen mode:', fullscreenError);
-      });
-    }
-  };
-
-  const handlePlayerClick = () => {
-    const isTouchDevice = 'ontouchstart' in window;
-
-    if (isTouchDevice) {
-      if (controlsVisible) {
-        hideControls();
-      } else {
-        showControlsTemporarily();
-      }
-    } else {
-      togglePlay();
+      playerContainerRef.current?.requestFullscreen().catch(console.error);
     }
   };
 
@@ -717,9 +286,7 @@ export const VideoPlayer = () => {
     <section className={`player-example${unstyledMode ? ' player-example--unstyled' : ''}`}>
       <MovieList
         onSelectMovie={handleSelectMovie}
-        inspectData={inspectData}
         unstyledMode={unstyledMode}
-        onOpenInspect={handleOpenInspect}
         onToggleUnstyledMode={handleToggleUnstyledMode}
       />
 
@@ -730,9 +297,6 @@ export const VideoPlayer = () => {
       {errorMessage && (
         <p className="player-example__message player-example__message--error">{errorMessage}</p>
       )}
-      {warningMessage && (
-        <p className="player-example__message player-example__message--warning">{warningMessage}</p>
-      )}
       {loading && (
         <p className="player-example__message player-example__message--loading">Loading...</p>
       )}
@@ -740,28 +304,26 @@ export const VideoPlayer = () => {
       {playerVisible && (
         <div
           ref={playerContainerRef}
-          className={`player-shell${playerTransparent ? ' player-shell--transparent' : ''}`}
+          className="player-shell"
           style={{ cursor: cursorHidden ? 'none' : 'default' }}
-          onPointerMove={(event) => {
-            if (event.pointerType !== 'touch') {
-              showControlsTemporarily();
-            }
-          }}
-          onPointerLeave={(event) => {
-            if (!hasVideoRef.current || draggingProgressBarRef.current || draggingVolumeBarRef.current || event.pointerType === 'touch') {
-              return;
-            }
-
+          onPointerMove={(e) => { if (e.pointerType !== 'touch') showControlsTemporarily(); }}
+          onPointerLeave={(e) => {
+            if (draggingProgressBarRef.current || draggingVolumeBarRef.current || e.pointerType === 'touch') return;
             hideControls();
             clearHideControlsTimeout();
           }}
-          onClick={handlePlayerClick}
+          onClick={() => {
+            const isTouch = 'ontouchstart' in window;
+            if (isTouch) controlsVisible ? hideControls() : showControlsTemporarily();
+            else togglePlay();
+          }}
         >
-          <canvas
-            ref={canvasRef}
-            className={`player-canvas${showCanvas ? '' : ' player-canvas--hidden'}`}
+          <video
+            ref={videoRef}
+            className="player-canvas"
             width={1280}
             height={720}
+            playsInline
           />
 
           <PlayerControls
@@ -786,12 +348,6 @@ export const VideoPlayer = () => {
           />
         </div>
       )}
-
-      <InspectModal
-        isOpen={inspectOpen}
-        inspectData={inspectData}
-        onClose={() => setInspectOpen(false)}
-      />
     </section>
   );
 };

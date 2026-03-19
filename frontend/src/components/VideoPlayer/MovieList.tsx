@@ -9,17 +9,13 @@ type Movie = {
 
 type MovieListProps = {
   onSelectMovie: (url: string, name: string) => void;
-  inspectData: unknown;
   unstyledMode: boolean;
-  onOpenInspect: () => void;
   onToggleUnstyledMode: () => void;
 };
 
 export const MovieList = ({
   onSelectMovie,
-  inspectData,
   unstyledMode,
-  onOpenInspect,
   onToggleUnstyledMode,
 }: MovieListProps) => {
   const [movies, setMovies] = useState<Movie[]>([]);
@@ -52,14 +48,6 @@ export const MovieList = ({
     <>
       <div className="player-example__actions">
         <div className="player-example__buttons">
-          <button
-            type="button"
-            className="player-example__button"
-            onClick={onOpenInspect}
-            disabled={!inspectData}
-          >
-            Inspect
-          </button>
           <button
             type="button"
             className="player-example__button"
