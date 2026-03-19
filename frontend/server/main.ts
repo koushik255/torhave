@@ -17,11 +17,12 @@ async function exists(path: string): Promise<boolean> {
 
 async function listMovies(dir: string): Promise<any[]> {
   const movies: any[] = [];
+  if (!(await exists(dir))) return [];
   for await (const entry of Deno.readDir(dir)) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory) {
       movies.push(...(await listMovies(fullPath)));
-    } else if (entry.isFile && [".mkv", ".mp4"].includes(extname(entry.name).toLowerCase())) {
+    } else if (entry.isFile && [".mkv", ".mp4", ".webm"].includes(extname(entry.name).toLowerCase())) {
       const relativePath = fullPath.replace(MOVIES_DIR, "");
       const base = fullPath.substring(0, fullPath.lastIndexOf('.'));
       
@@ -62,13 +63,13 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
   const url = new URL(req.url);
 
   // CORS and Security Headers
+  // Removed restrictive COOP/COEP as they are not needed for standard <video> 
+  // and can cause issues with loading resources.
   const headers = new Headers({
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": req.headers.get("access-control-request-headers") || "Range, Content-Type",
     "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range, Content-Length, Content-Type",
-    "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Embedder-Policy": "require-corp",
   });
 
   if (req.method === "OPTIONS") {
@@ -100,12 +101,9 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
   // API: Stream Video
   if (url.pathname === "/api/stream") {
     const moviePath = url.searchParams.get("path");
-    console.log(`[Stream] Movie path param: ${moviePath}`);
-    
     if (!moviePath) return new Response("Missing path", { status: 400, headers });
 
     const fullPath = join(MOVIES_DIR, moviePath);
-    console.log(`[Stream] Full path: ${fullPath}`);
     
     try {
       const file = await Deno.open(fullPath, { read: true });
@@ -113,11 +111,6 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
       const range = req.headers.get("range");
       const contentType = getContentType(fullPath);
       
-      console.log(`[Stream] Raw Range header: ${range}`);
-      console.log(`[Stream] File size: ${size}`);
-      console.log(`[Stream] Content-Type: ${contentType}`);
-
-      const MAX_CHUNK_SIZE = 10 * 1024 * 1024;
       let start = 0;
       let end = size - 1;
 
@@ -127,19 +120,12 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
         end = parts[1] ? parseInt(parts[1], 10) : size - 1;
       }
 
-      // Force a maximum chunk size for ALL video/audio requests
-      if (end - start + 1 > MAX_CHUNK_SIZE) {
-        end = start + MAX_CHUNK_SIZE - 1;
-      }
-
       if (start >= size || end >= size) {
         headers.set("Content-Range", `bytes */${size}`);
         return new Response("Range Not Satisfiable", { status: 416, headers });
       }
 
       const chunkSize = end - start + 1;
-      console.log(`[Stream] Range: ${range ? 'provided' : 'missing'}, start: ${start}, end: ${end}, chunkSize: ${chunkSize}`);
-      
       await file.seek(start, Deno.SeekMode.Start);
       
       headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
@@ -147,29 +133,9 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
       headers.set("Content-Length", chunkSize.toString());
       headers.set("Content-Type", contentType);
 
-      console.log(`[Stream] Responding with 206, Content-Range: bytes ${start}-${end}/${size}`);
-      
-      // Only stream the requested chunk
-      let bytesSent = 0;
-      const limitedStream = file.readable.pipeThrough(new TransformStream({
-        transform(chunk, controller) {
-          const remaining = chunkSize - bytesSent;
-          if (remaining <= 0) {
-            controller.terminate();
-            return;
-          }
-          if (chunk.length <= remaining) {
-            controller.enqueue(chunk);
-            bytesSent += chunk.length;
-          } else {
-            controller.enqueue(chunk.subarray(0, remaining));
-            bytesSent += remaining;
-            controller.terminate();
-          }
-        }
-      }));
-
-      return new Response(limitedStream, {
+      // Stream the file directly without artificial chunk limiting
+      // The browser will handle the flow control and closing the stream if needed.
+      return new Response(file.readable, {
         status: 206,
         headers,
       });
