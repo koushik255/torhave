@@ -43,6 +43,7 @@ async fn main() {
         .route("/api/movies", get(list_movies))
         .route("/subtitles/*path", get(serve_subtitle))
         .nest_service("/movie", ServeDir::new(movies_dir))
+        .route("/:id", get(spa_watch))
         .fallback_service(ServeDir::new("dist"))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
@@ -52,6 +53,37 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     println!("Server running on http://{}", addr);
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Single path segment (`/:id` — matchit/axum use `:`, not `{…}`): digits → SPA; other names → files under `dist/`.
+async fn spa_watch(Path(id): Path<String>) -> Result<Response, StatusCode> {
+    if id.contains("..") {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    if id.chars().all(|c| c.is_ascii_digit()) {
+        let html = tokio::fs::read_to_string("dist/index.html")
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(Body::from(html))
+            .unwrap());
+    }
+
+    let path = PathBuf::from("dist").join(&id);
+    let meta = tokio::fs::metadata(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    if !meta.is_file() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime.as_ref())
+        .body(Body::from(bytes))
+        .unwrap())
 }
 
 async fn list_movies(State(state): State<AppState>) -> Json<Vec<Movie>> {

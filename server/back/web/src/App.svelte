@@ -19,77 +19,92 @@
 
   /** @type {{ name: string, path: string }[]} */
   let movies = $state([])
-  /** @type {{ name: string, path: string } | null} */
-  let selected = $state(null)
   let loading = $state(true)
   /** @type {string | null} */
   let error = $state(null)
 
-  onMount(async () => {
-    try {
-      const r = await fetch('/api/movies')
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      movies = await r.json()
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load movies'
-    } finally {
-      loading = false
+  let pathname = $state(
+    typeof window !== 'undefined' ? window.location.pathname : '/',
+  )
+
+  const watchMatch = $derived(pathname.match(/^\/(\d+)$/))
+  const watchNum = $derived(
+    watchMatch ? parseInt(watchMatch[1], 10) : null,
+  )
+  const watchIndex = $derived(
+    watchNum !== null && watchNum > 0 ? watchNum - 1 : null,
+  )
+
+  const isHome = $derived(pathname === '/' || pathname === '')
+  const selected = $derived(
+    watchIndex !== null && movies[watchIndex]
+      ? movies[watchIndex]
+      : null,
+  )
+
+  onMount(() => {
+    function syncPath() {
+      pathname = window.location.pathname
     }
+    window.addEventListener('popstate', syncPath)
+
+    ;(async () => {
+      try {
+        const r = await fetch('/api/movies')
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        movies = await r.json()
+      } catch (e) {
+        error = e instanceof Error ? e.message : 'Failed to load movies'
+      } finally {
+        loading = false
+      }
+    })()
+
+    return () => window.removeEventListener('popstate', syncPath)
   })
-
-  /** @param {{ name: string, path: string }} m */
-  function pick(m) {
-    selected = m
-  }
 </script>
-
-<h1>Movies</h1>
 
 {#if error}
   <p class="error">{error}</p>
+{:else if loading}
+  <p class="muted">Loading…</p>
+{:else if isHome}
+  <h1>Movies</h1>
+  {#if movies.length === 0}
+    <p class="muted">No videos found (mp4, mkv, webm).</p>
+  {:else}
+    <ul class="title-list">
+      {#each movies as m, i (m.path)}
+        <li>
+          <a href="/{i + 1}">{m.name}</a>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+{:else if watchMatch}
+  <nav class="back">
+    <a href="/">← Movies</a>
+  </nav>
+  {#if watchIndex === null || watchNum === 0}
+    <p class="error">Invalid address (use /1, /2, …).</p>
+  {:else if !selected}
+    <p class="error">No movie at this index.</p>
+  {:else}
+    {#key selected.path}
+      <video controls playsinline>
+        <source src={movieSrc(selected.path)} />
+        <track
+          kind="subtitles"
+          srclang="en"
+          label="Subtitles"
+          src={subtitleSrc(selected.path)}
+          default
+        />
+      </video>
+    {/key}
+    <p class="muted">{selected.name}</p>
+  {/if}
 {:else}
-  <div class="layout">
-    <aside>
-      <h2>Library</h2>
-      {#if loading}
-        <p class="muted">Loading…</p>
-      {:else if movies.length === 0}
-        <p class="muted">No videos found (mp4, mkv, webm).</p>
-      {:else}
-        <ul class="movie-list">
-          {#each movies as m (m.path)}
-            <li>
-              <button
-                type="button"
-                class:active={selected?.path === m.path}
-                onclick={() => pick(m)}
-              >
-                {m.name}
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </aside>
-
-    <main>
-      {#if selected}
-        {#key selected.path}
-          <video controls playsinline>
-            <source src={movieSrc(selected.path)} />
-            <track
-              kind="subtitles"
-              srclang="en"
-              label="Subtitles"
-              src={subtitleSrc(selected.path)}
-              default
-            />
-          </video>
-        {/key}
-        <p class="muted">{selected.name}</p>
-      {:else if !loading && movies.length > 0}
-        <p class="placeholder">Choose a file to play.</p>
-      {/if}
-    </main>
-  </div>
+  <p class="error">Not found.</p>
+  <p class="muted"><a href="/">Go home</a></p>
 {/if}
