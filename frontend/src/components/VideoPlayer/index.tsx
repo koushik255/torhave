@@ -333,6 +333,13 @@ export const VideoPlayer = () => {
     try {
       await disposePlayback();
 
+      if (!window.isSecureContext) {
+        throw new Error(
+          'Media features are disabled because this site is being served over an insecure connection (HTTP). '
+          + 'Please use HTTPS or access it via http://localhost using an SSH tunnel to enable video decoding.'
+        );
+      }
+
       setLoading(true);
       setPlayerVisible(true);
       setErrorMessage('');

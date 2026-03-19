@@ -60,10 +60,8 @@ fn test_torrent(torrent: &str) {
 }
 
 fn download_torrent(torrent: &str) {
-    let output_dir = Path::new(
-        &env::var("MOVIES_DIR")
-            .unwrap_or_else(|_| "/home/koushikk/Documents/anew/tor/movie".to_string()),
-    );
+    let movies_dir = env::var("MOVIES_DIR").unwrap_or_else(|_| "/home/koushikk/Documents/anew/tor/movie".to_string());
+    let output_dir = Path::new(&movies_dir);
 
     if !output_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(output_dir) {
