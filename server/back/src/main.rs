@@ -1,6 +1,9 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
+    http::{header, StatusCode},
+    response::Response,
     routing::get,
+    body::Body,
     Json, Router,
 };
 use serde::Serialize;
@@ -28,7 +31,7 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
 
-    let movies_dir = PathBuf::from("/root/tormov/torhave/movie");
+    let movies_dir = PathBuf::from("/home/koushikk/Documents/anew/tor/movie");
     let state = AppState { movies_dir: movies_dir.clone() };
 
     let cors = CorsLayer::new()
@@ -38,8 +41,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/movies", get(list_movies))
-        .nest_service("/movies", ServeDir::new(movies_dir))
-        .fallback_service(ServeDir::new("../dist"))
+        .route("/subtitles/*path", get(serve_subtitle))
+        .nest_service("/movie", ServeDir::new(movies_dir))
+        .fallback_service(ServeDir::new("dist"))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -58,7 +62,7 @@ async fn list_movies(State(state): State<AppState>) -> Json<Vec<Movie>> {
     {
         if entry.file_type().is_file() {
             let path = entry.path();
-            if let Some(ext) = path.extension() {
+                if let Some(ext) = path.extension() {
                 let ext_str = ext.to_string_lossy().to_lowercase();
                 if ext_str == "mp4" || ext_str == "mkv" || ext_str == "webm" {
                     if let Ok(rel_path) = path.strip_prefix(&state.movies_dir) {
@@ -72,4 +76,24 @@ async fn list_movies(State(state): State<AppState>) -> Json<Vec<Movie>> {
         }
     }
     Json(movies)
+}
+
+async fn serve_subtitle(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> Result<Response, StatusCode> {
+    let srt_path = state.movies_dir.join(&path);
+    
+    let srt_content = match tokio::fs::read_to_string(&srt_path).await {
+        Ok(content) => content,
+        Err(_) => return Err(StatusCode::NOT_FOUND),
+    };
+    
+    let vtt_content = format!("WEBVTT\n\n{}", srt_content.replace(",", "."));
+    
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/vtt; charset=utf-8")
+        .body(Body::from(vtt_content))
+        .unwrap())
 }

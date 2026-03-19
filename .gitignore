@@ -1,6 +1,7 @@
 /target
 /movie
-frontend/node_modules
-frontend/dist
 .env
-frontend/server/target
+
+server/back/target/
+server/back/dist/
+server/back/web/node_modules/
