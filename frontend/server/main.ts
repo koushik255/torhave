@@ -117,67 +117,62 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
       console.log(`[Stream] File size: ${size}`);
       console.log(`[Stream] Content-Type: ${contentType}`);
 
+      const MAX_CHUNK_SIZE = 10 * 1024 * 1024;
+      let start = 0;
+      let end = size - 1;
+
       if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        
-        // Define a maximum chunk size (e.g., 10MB)
-        const MAX_CHUNK_SIZE = 10 * 1024 * 1024;
-        let end = parts[1] ? parseInt(parts[1], 10) : size - 1;
-
-        // Force the chunk size to never exceed MAX_CHUNK_SIZE
-        if (end - start + 1 > MAX_CHUNK_SIZE) {
-          end = start + MAX_CHUNK_SIZE - 1;
-        }
-        
-        if (start >= size || end >= size) {
-          headers.set("Content-Range", `bytes */${size}`);
-          return new Response("Range Not Satisfiable", { status: 416, headers });
-        }
-
-        const chunkSize = end - start + 1;
-        console.log(`[Stream] Parsed range - start: ${start}, end: ${end}, chunkSize: ${chunkSize}`);
-        
-        await file.seek(start, Deno.SeekMode.Start);
-        
-        headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
-        headers.set("Accept-Ranges", "bytes");
-        headers.set("Content-Length", chunkSize.toString());
-        headers.set("Content-Type", contentType);
-
-        console.log(`[Stream] Responding with 206, Content-Range: bytes ${start}-${end}/${size}`);
-        
-        // Only stream the requested chunk
-        let bytesSent = 0;
-        const limitedStream = file.readable.pipeThrough(new TransformStream({
-          transform(chunk, controller) {
-            const remaining = chunkSize - bytesSent;
-            if (remaining <= 0) {
-              controller.terminate();
-              return;
-            }
-            if (chunk.length <= remaining) {
-              controller.enqueue(chunk);
-              bytesSent += chunk.length;
-            } else {
-              controller.enqueue(chunk.subarray(0, remaining));
-              bytesSent += remaining;
-              controller.terminate();
-            }
-          }
-        }));
-
-        return new Response(limitedStream, {
-          status: 206,
-          headers,
-        });
+        start = parseInt(parts[0], 10);
+        end = parts[1] ? parseInt(parts[1], 10) : size - 1;
       }
 
-      console.log(`[Stream] No range header, serving full file: ${size} bytes`);
+      // Force a maximum chunk size for ALL video/audio requests
+      if (end - start + 1 > MAX_CHUNK_SIZE) {
+        end = start + MAX_CHUNK_SIZE - 1;
+      }
+
+      if (start >= size || end >= size) {
+        headers.set("Content-Range", `bytes */${size}`);
+        return new Response("Range Not Satisfiable", { status: 416, headers });
+      }
+
+      const chunkSize = end - start + 1;
+      console.log(`[Stream] Range: ${range ? 'provided' : 'missing'}, start: ${start}, end: ${end}, chunkSize: ${chunkSize}`);
+      
+      await file.seek(start, Deno.SeekMode.Start);
+      
+      headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
       headers.set("Accept-Ranges", "bytes");
-      headers.set("Content-Length", size.toString());
+      headers.set("Content-Length", chunkSize.toString());
       headers.set("Content-Type", contentType);
-      return new Response(file.readable, { headers });
+
+      console.log(`[Stream] Responding with 206, Content-Range: bytes ${start}-${end}/${size}`);
+      
+      // Only stream the requested chunk
+      let bytesSent = 0;
+      const limitedStream = file.readable.pipeThrough(new TransformStream({
+        transform(chunk, controller) {
+          const remaining = chunkSize - bytesSent;
+          if (remaining <= 0) {
+            controller.terminate();
+            return;
+          }
+          if (chunk.length <= remaining) {
+            controller.enqueue(chunk);
+            bytesSent += chunk.length;
+          } else {
+            controller.enqueue(chunk.subarray(0, remaining));
+            bytesSent += remaining;
+            controller.terminate();
+          }
+        }
+      }));
+
+      return new Response(limitedStream, {
+        status: 206,
+        headers,
+      });
     } catch (e) {
       console.error(`[Stream] Error:`, e);
       return new Response("File not found", { status: 404, headers });
