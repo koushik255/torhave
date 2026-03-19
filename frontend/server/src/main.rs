@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
 use walkdir::WalkDir;
 
 #[derive(Serialize)]
@@ -22,6 +23,11 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .init();
+
     let movies_dir = PathBuf::from("/root/tormov/torhave/movie");
     let state = AppState { movies_dir: movies_dir.clone() };
 
@@ -35,6 +41,7 @@ async fn main() {
         .nest_service("/movies", ServeDir::new(movies_dir))
         .fallback_service(ServeDir::new("../dist"))
         .layer(cors)
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let addr = "0.0.0.0:8000";
