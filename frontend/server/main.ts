@@ -120,7 +120,15 @@ Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
       if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
         const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : size - 1;
+        
+        // Define a maximum chunk size (e.g., 10MB)
+        const MAX_CHUNK_SIZE = 10 * 1024 * 1024;
+        let end = parts[1] ? parseInt(parts[1], 10) : size - 1;
+
+        // Force the chunk size to never exceed MAX_CHUNK_SIZE
+        if (end - start + 1 > MAX_CHUNK_SIZE) {
+          end = start + MAX_CHUNK_SIZE - 1;
+        }
         
         if (start >= size || end >= size) {
           headers.set("Content-Range", `bytes */${size}`);
