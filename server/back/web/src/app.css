@@ -1,0 +1,124 @@
+:root {
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  color: #e5e7eb;
+  background: #0f1117;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.25rem;
+  min-height: 100svh;
+}
+
+h1 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+  color: #f9fafb;
+}
+
+.layout {
+  display: grid;
+  gap: 1.25rem;
+}
+
+@media (min-width: 720px) {
+  .layout {
+    grid-template-columns: 220px 1fr;
+    align-items: start;
+  }
+}
+
+aside {
+  border: 1px solid #272a35;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #161922;
+}
+
+aside h2 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9ca3af;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid #272a35;
+}
+
+.movie-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+@media (min-width: 720px) {
+  .movie-list {
+    max-height: min(70vh, 520px);
+  }
+}
+
+.movie-list button {
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border: none;
+  border-bottom: 1px solid #22262f;
+  background: transparent;
+  color: #d1d5db;
+  font: inherit;
+  cursor: pointer;
+}
+
+.movie-list button:hover {
+  background: #1c2130;
+}
+
+.movie-list button.active {
+  background: #252a3a;
+  color: #fff;
+}
+
+main {
+  min-width: 0;
+}
+
+video {
+  width: 100%;
+  max-height: min(70vh, 540px);
+  background: #000;
+  border-radius: 8px;
+}
+
+.placeholder,
+.error,
+.muted {
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px dashed #333847;
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+.error {
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.muted {
+  border-style: solid;
+}
