@@ -22,7 +22,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let movies_dir = PathBuf::from("/home/koushikk/Documents/anew/tor/movie");
+    let movies_dir = PathBuf::from("/root/tormov/torhave/movie");
     let state = AppState { movies_dir: movies_dir.clone() };
 
     let cors = CorsLayer::new()
@@ -33,7 +33,7 @@ async fn main() {
     let app = Router::new()
         .route("/api/movies", get(list_movies))
         .nest_service("/movies", ServeDir::new(movies_dir))
-        .nest_service("/", ServeDir::new("../dist"))
+        .fallback_service(ServeDir::new("../dist"))
         .layer(cors)
         .with_state(state);
 
